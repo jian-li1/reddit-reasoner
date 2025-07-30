@@ -1,0 +1,4 @@
+zstandard
+pandas
+nltk
+deepmultilingualpunctuation
