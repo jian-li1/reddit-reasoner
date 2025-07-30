@@ -2,12 +2,6 @@ import pandas as pd
 import argparse
 import os
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-d', '--directory', type=str, required=True, help='Directory containing the CSV files')
-parser.add_argument('--subreddit', type=str, required=True, help='Subreddit name')
-parser.add_argument('--min-score', type=int, required=True, help='Minimum score of submission/comment')
-# parser.add_argument('--include-mod', type=bool, default=False, help='Include submissions/comments from moderators')
-
 def check_comment(idx: int) -> None:
     """
     Determines if a comment is detached from a conversation tree.
@@ -33,6 +27,12 @@ def check_comment(idx: int) -> None:
         comment_df.at[idx, 'drop'] = True
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--directory', type=str, required=True, help='Directory path containing the submission and comment CSV files')
+    parser.add_argument('--subreddit', type=str, required=True, help='Subreddit name')
+    parser.add_argument('--min-score', type=int, required=True, help='Minimum score of submission/comment')
+    # parser.add_argument('--include-mod', type=bool, default=False, help='Include submissions/comments from moderators')
+    
     args = parser.parse_args()
     subreddit = args.subreddit
     directory = args.directory

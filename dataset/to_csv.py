@@ -2,15 +2,6 @@
 # https://github.com/Watchful1/PushshiftDumps/blob/master/scripts/to_csv.py
 # minor adjustments were made to adapt to this project
 
-# this converts a zst file to csv
-#
-# it's important to note that the resulting file will likely be quite large
-# and you probably won't be able to open it in excel or another csv reader
-#
-# arguments are inputfile, outputfile, fields
-# call this like
-# python to_csv.py wallstreetbets_submissions.zst wallstreetbets_submissions.csv author,selftext,title
-
 import zstandard
 import os
 import json

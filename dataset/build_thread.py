@@ -12,16 +12,6 @@ import time
 import argparse
 from tqdm import tqdm
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-d', '--directory', type=str, required=True, help='Directory containing the filtered CSV files')
-parser.add_argument('--subreddit', type=str, required=True, help='Subreddit name')
-parser.add_argument('--max-depth', type=str, default=3, help='Maximum depth of discussion thread')
-parser.add_argument('--max-replies', type=str, default=3, help='Maxmum number of replies of a single discussion thread')
-parser.add_argument('--ft-model', type=str, required=True, help='Model to be fine-tuned (its tokenizer is used for token counts)')
-parser.add_argument('--gen-model', type=str, required=True, help='Model used to generate synthetic data (its tokenizer is used for token counts)')
-parser.add_argument('--ft-max-tok', type=int, default=4000, help='Maximum number of tokens from a single discussion thread to include in fine-tuning')
-parser.add_argument('--gen-max-tok', type=int, default=10000, help='Maximum number of tokens from a single discussion thread for generating synthetic data')
-
 def check_depth(idx: int) -> None:
     """
     Get depth level of each comment. Top-level comment begins at 1
@@ -307,7 +297,6 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
         post_dict['comments'].clear()
 
         del original_root_text
-        # original_children_text.clear()
     # Current message is comment
     else:
         parent = thread[-1]
@@ -377,7 +366,6 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
         # Cleanup original text of all messages in the thread
         original_thread_text.clear()
         del original_thread_text
-        # original_children_text.clear()
     
     # Cleanup original text of children
     original_children_text.clear()
@@ -399,6 +387,16 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
         parent['comments'].clear()
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--directory', type=str, required=True, help='Directory path containing the filtered submission and comment CSV files')
+    parser.add_argument('--subreddit', type=str, required=True, help='Subreddit name')
+    parser.add_argument('--max-depth', type=str, default=3, help='Maximum depth of discussion thread')
+    parser.add_argument('--max-replies', type=str, default=3, help='Maxmum number of replies of a single discussion thread')
+    parser.add_argument('--ft-model', type=str, required=True, help='Model to be fine-tuned (its tokenizer is used for token counts)')
+    parser.add_argument('--gen-model', type=str, required=True, help='Model used to generate synthetic data (its tokenizer is used for token counts)')
+    parser.add_argument('--ft-max-tok', type=int, default=4000, help='Maximum number of tokens from a single discussion thread to include in fine-tuning')
+    parser.add_argument('--gen-max-tok', type=int, default=10000, help='Maximum number of tokens from a single discussion thread for generating synthetic data')
+    
     args = parser.parse_args()
     subreddit = args.subreddit
     directory = args.directory
