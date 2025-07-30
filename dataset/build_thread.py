@@ -1,4 +1,3 @@
-from math import floor
 import pandas as pd
 import os
 from transformers import AutoTokenizer
@@ -184,14 +183,14 @@ def truncate_msgs(msgs: list, total_json_tok: int, max_tok_limit: int, tokenizer
         # Get token count difference between current message and next message
         num_tok_diff = msg_tok_list[i]['tok_count'] - msg_tok_list[i+1]['tok_count']
         # Get number of tokens to truncate
-        # If `overflow_tok > num_tok_diff * (i+1)`, truncate top i+1 messages by `num_tok_diff`
+        # If `overflow_tok > num_tok_diff * (i+1)`, truncate top i+1 messages each by `num_tok_diff` tokens
         if overflow_tok > num_tok_diff * (i + 1):
             for j in range(i + 1):
                 msg_tok_list[j]['tok_count'] -= num_tok_diff
             # Update overflow token count
             overflow_tok -= num_tok_diff * (i + 1)
             i += 1
-        # If `overflow_tok <= num_tok_diff * (i+1)`, partially truncate top i+1 messages by `overflow_tok / (i+1)`
+        # If `overflow_tok <= num_tok_diff * (i+1)`, partially truncate top i+1 messages each by `overflow_tok / (i+1)` tokens
         else:
             partial_tok_trunc = overflow_tok / (i + 1)
             for j in range(i + 1):
@@ -200,7 +199,7 @@ def truncate_msgs(msgs: list, total_json_tok: int, max_tok_limit: int, tokenizer
             overflow_tok = 0
             break
     
-    # If there is still token overflow, uniformly truncate all messages by `overflow_tok // n`
+    # If there is still token overflow, uniformly truncate all messages each by `overflow_tok / num_msgs` tokens
     if overflow_tok > 0:
         uni_tok_trunc = overflow_tok / num_msgs
         for i in range(num_msgs):
@@ -234,11 +233,13 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
     # Sort the children by most score, and then by most replies
     child_ids.sort(key=sort_top_comments)
 
-    output_data = [id]
+    output_data = {'id': id}
 
     is_submission = id.startswith('t3')
     # Current message is submission
     if is_submission:
+        output_data['post_id'] = id
+
         post = submission_df.iloc[idx]
         # Get flair text if exists
         flair = post['link_flair_text']
@@ -269,7 +270,7 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
             truncate_msgs(thread+post_dict['comments'], total_json_tok, ft_max_tok, ft_tokenizer)
         
         # Prepare full thread for output data
-        output_data.append(json.dumps(root, ensure_ascii=False))
+        output_data['full_thread'] = json.dumps(root, ensure_ascii=False)
 
         # Restore original text to all messages in the thread
         post_dict['body'] = original_root_text
@@ -284,9 +285,9 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
             truncate_msgs(thread+post_dict['comments'], total_json_tok, gen_max_tok, gen_tokenizer)
         
         # Prepare subthread for output data
-        output_data.append(json.dumps(root, ensure_ascii=False))
+        output_data['subthread'] = json.dumps(root, ensure_ascii=False)
         # No subthread content
-        output_data.append(str(None).encode("utf-8", errors='replace').decode())
+        output_data['subthread_context'] = str(None).encode("utf-8", errors='replace').decode()
 
         # Restore original text to all messages in the thread
         post_dict['body'] = original_root_text
@@ -299,6 +300,8 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
         del original_root_text
     # Current message is comment
     else:
+        output_data['post_id'] = root['post']['id']
+
         parent = thread[-1]
         # Create comment data
         curr_comment = comment_df.iloc[idx]
@@ -327,7 +330,7 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
             truncate_msgs(thread+comment_dict['comments'], total_json_tok, ft_max_tok, ft_tokenizer)
 
         # Prepare full thread for output data
-        output_data.append(json.dumps(root, ensure_ascii=False))
+        output_data['full_thread'] = json.dumps(root, ensure_ascii=False)
 
         # Restore original text of all messages in the thread
         for i, msg in enumerate(thread):
@@ -348,8 +351,8 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
             truncate_msgs(thread+comment_dict['comments'], total_json_tok, gen_max_tok, gen_tokenizer)
             
         # Prepare subthread and subthread context for output data
-        output_data.append(json.dumps(comment_dict, ensure_ascii=False))
-        output_data.append(json.dumps(root, ensure_ascii=False))
+        output_data['subthread'] = json.dumps(comment_dict, ensure_ascii=False)
+        output_data['subthread_context'] = json.dumps(root, ensure_ascii=False)
 
         # Restore original text to all messages in the thread
         for i, msg in enumerate(thread):
@@ -390,12 +393,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--directory', type=str, required=True, help='Directory path containing the filtered submission and comment CSV files')
     parser.add_argument('--subreddit', type=str, required=True, help='Subreddit name')
-    parser.add_argument('--max-depth', type=str, default=3, help='Maximum depth of discussion thread')
-    parser.add_argument('--max-replies', type=str, default=3, help='Maxmum number of replies of a single discussion thread')
+    parser.add_argument('--max-depth', type=str, default=3, help='Maximum depth of discussion thread. Default is 3.')
+    parser.add_argument('--max-replies', type=str, default=3, help='Maxmum number of replies of a single discussion thread. Default is 3.')
     parser.add_argument('--ft-model', type=str, required=True, help='Model to be fine-tuned (its tokenizer is used for token counts)')
     parser.add_argument('--gen-model', type=str, required=True, help='Model used to generate synthetic data (its tokenizer is used for token counts)')
-    parser.add_argument('--ft-max-tok', type=int, default=4000, help='Maximum number of tokens from a single discussion thread to include in fine-tuning')
-    parser.add_argument('--gen-max-tok', type=int, default=10000, help='Maximum number of tokens from a single discussion thread for generating synthetic data')
+    parser.add_argument('--ft-max-tok', type=int, default=4000, help='Maximum number of tokens from a single discussion thread to include in fine-tuning. Default is 4000.')
+    parser.add_argument('--gen-max-tok', type=int, default=10000, help='Maximum number of tokens from a single discussion thread for generating synthetic data. Default is 10000.')
     
     args = parser.parse_args()
     subreddit = args.subreddit
@@ -424,8 +427,9 @@ if __name__ == '__main__':
     start_time = time.perf_counter()
 
     output_file = open(f'{path}_threads.csv', 'w', encoding='utf-8', newline="")
-    writer = csv.writer(output_file)
-    writer.writerow(['id', 'full_thread', 'subthread', 'subthread_context'])
+    csv_header = ['id', 'post_id', 'full_thread', 'subthread', 'subthread_context']
+    writer = csv.DictWriter(output_file, fieldnames=csv_header)
+    writer.writeheader()
 
     # Load submissions and comments into dataframes
     submission_df = pd.read_csv(f'{path}_filtered_submissions.csv', dtype={
