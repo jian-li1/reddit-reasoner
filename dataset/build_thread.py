@@ -10,10 +10,56 @@ from deepmultilingualpunctuation import PunctuationModel
 import time
 import argparse
 from tqdm import tqdm
+import logging
+
+logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
+logger = logging.getLogger()
+
+def get_args() -> argparse.Namespace:
+    """
+    Parses and returns the values of command line arguments.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--directory', type=str, required=True, help='Directory path containing the submission and comment CSV files')
+    parser.add_argument('--subreddit', type=str, required=True, help='Subreddit name')
+    parser.add_argument('--min-score', type=int, default=5, help='Minimum score of submission/comment')
+    parser.add_argument('--max-depth', type=str, default=3, help='Maximum depth of discussion thread. Default is 3.')
+    parser.add_argument('--max-replies', type=str, default=3, help='Maxmum number of replies of a single discussion thread. Default is 3.')
+    parser.add_argument('--ft-model', type=str, required=True, help='Model to be fine-tuned (its tokenizer is used for token counts)')
+    parser.add_argument('--gen-model', type=str, required=True, help='Model used to generate synthetic data (its tokenizer is used for token counts)')
+    parser.add_argument('--ft-max-tok', type=int, default=4000, help='Maximum number of tokens from a single discussion thread to include in fine-tuning. Default is 4000.')
+    parser.add_argument('--gen-max-tok', type=int, default=10000, help='Maximum number of tokens from a single discussion thread for generating synthetic data. Default is 10000.')
+    
+    args = parser.parse_args()
+    return args
+
+def check_comment(idx: int) -> None:
+    """
+    Determines if a comment is detached from a conversation tree.
+    Assumes parent comment is already checked.
+
+    Parameters:
+        idx (int): Index of the comment in the comment dataframe
+    """
+    # Get parent id and index
+    parent_id = comment_df.loc[idx, 'parent_id']
+    parent_idx = comment_df.loc[idx, 'parent_idx']
+
+    has_parent = pd.notna(parent_idx)
+
+    # Parent is a submission or confirmed to be an attached comment
+    # print(idx, parent_idx)
+    if parent_id in submission_ids or has_parent and comment_df.loc[parent_idx, 'drop'] == False:
+        # Mark all comment ids in the stack to not drop
+        comment_df.at[idx, 'drop'] = False
+    # No parent submission or parent is confirmed to be a detached comment
+    else:
+        # Mark all comment ids in the stack to drop
+        comment_df.at[idx, 'drop'] = True
 
 def check_depth(idx: int) -> None:
     """
-    Get depth level of each comment. Top-level comment begins at 1
+    Get depth level of each comment. Top-level comment begins at 1.
     """
     # Get parent id and index
     parent_id = comment_df.loc[idx, 'parent_id']
@@ -27,6 +73,9 @@ def check_depth(idx: int) -> None:
         comment_df.loc[idx, 'depth'] = parent_depth + 1
 
 def build_submission_dict(id: str, author: str, title: str, body: str, flair: str | None = None) -> dict:
+    """
+    Returns a dictionary of the specified submission information.
+    """
     return {
         'id': id,
         'author': author,
@@ -34,6 +83,9 @@ def build_submission_dict(id: str, author: str, title: str, body: str, flair: st
     } | ({'flair': flair} if flair else {}) | {'body': body}
 
 def build_comment_dict(id: str, parent_id: str, author: str, body: str) -> dict:
+    """
+    Returns a dictionary of the specified comment information.
+    """
     return {
         'id': id,
         'parent_id': parent_id,
@@ -42,17 +94,27 @@ def build_comment_dict(id: str, parent_id: str, author: str, body: str) -> dict:
     }
 
 def json_token_count(data: dict, tokenizer) -> int:
+    """
+    Determines the number of tokens of a dictionary converted to a string based on the specified tokenizer.
+    """
     # Convert dictionary to string
     json_string = json.dumps(data, ensure_ascii=False)
     token_ids = tokenizer.encode(json_string)
     return len(token_ids)
 
 def string_token_count(data: str, tokenizer) -> int:
+    """
+    Determines the number of tokens of a string based on the specified tokenizer.
+    """
     token_ids = tokenizer.encode(json.dumps(data, ensure_ascii=False))
     return len(token_ids)
 
 cached_summaries = {}
 def summarize_text(id: str, text: str, max_tokens: int, tokenizer) -> str:
+    """
+    Summarizes a text to at most `max_tokens` tokens based on the specified tokenizer.
+    Uses extractive-based summarization to retrieve the most important sentences from the text.
+    """
     # Check if message is already summarized
     if id in cached_summaries:
         heap = cached_summaries[id].copy()
@@ -149,6 +211,9 @@ def summarize_text(id: str, text: str, max_tokens: int, tokenizer) -> str:
     return summary
 
 def sort_top_comments(comment: tuple[int, str]) -> tuple[int, int]:
+    """
+    Helper function to sort comments based on the highest score.
+    """
     idx, id = comment
     score = comment_df.loc[idx, 'score']
     num_replies = len(child_id_list[id])
@@ -156,6 +221,11 @@ def sort_top_comments(comment: tuple[int, str]) -> tuple[int, int]:
     return (-score, -num_replies)
 
 def truncate_msgs(msgs: list, total_json_tok: int, max_tok_limit: int, tokenizer) -> None:
+    """
+    Given a list of messages in dictionaries, reduce the token count of each message such that
+    the total count of all the messages does not exceed `max_tok_limit`.
+    Maximizes the token count for each message to preserve as much original text as possible.
+    """
     # Get token count for each message text and form a tuple (msg, msg token count)
     msg_tok_list = [
         {
@@ -218,6 +288,20 @@ def truncate_msgs(msgs: list, total_json_tok: int, max_tok_limit: int, tokenizer
         msg['body'] = summarize_text(msg['id'], msg['body'], msg_tok_cap, tokenizer)
 
 def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
+    """
+    Traverses the conversation tree starting from the submission by DFS.
+    Then, for each message, writes the full discussion thread, subthread, and subthread context to output CSV, 
+    all represented in JSON.
+
+    Full discussion thread consists of all messages leading to the current message and its replies.
+    Subthread consists of only the current message and its replies.
+    Subthread context consists of only messages before the current message.
+
+    Ensures the token count of the full discussion thread JSON does not exceed the
+    max token count per thread to include in fine-tuning, 
+    and the token count of the subthread JSON and subthread context JSON combined does not exceed
+    the max token count per thread for synthetic data generation.
+    """
     # Get id of each child
     child_ids = child_id_list[id]
     # Submission/comment has no children/replies
@@ -390,21 +474,12 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
         parent['comments'].clear()
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--directory', type=str, required=True, help='Directory path containing the filtered submission and comment CSV files')
-    parser.add_argument('--subreddit', type=str, required=True, help='Subreddit name')
-    parser.add_argument('--max-depth', type=str, default=3, help='Maximum depth of discussion thread. Default is 3.')
-    parser.add_argument('--max-replies', type=str, default=3, help='Maxmum number of replies of a single discussion thread. Default is 3.')
-    parser.add_argument('--ft-model', type=str, required=True, help='Model to be fine-tuned (its tokenizer is used for token counts)')
-    parser.add_argument('--gen-model', type=str, required=True, help='Model used to generate synthetic data (its tokenizer is used for token counts)')
-    parser.add_argument('--ft-max-tok', type=int, default=4000, help='Maximum number of tokens from a single discussion thread to include in fine-tuning. Default is 4000.')
-    parser.add_argument('--gen-max-tok', type=int, default=10000, help='Maximum number of tokens from a single discussion thread for generating synthetic data. Default is 10000.')
-    
-    args = parser.parse_args()
+    # Get values of command line arguments
+    args = get_args()
     subreddit = args.subreddit
     directory = args.directory
     path = os.path.join(directory, subreddit)
-
+    min_score = args.min_score
     max_depth = args.max_depth
     max_children = args.max_replies
     ft_max_tok = args.ft_max_tok # Max token per thread to include in fine-tuning
@@ -432,30 +507,79 @@ if __name__ == '__main__':
     writer.writeheader()
 
     # Load submissions and comments into dataframes
-    submission_df = pd.read_csv(f'{path}_filtered_submissions.csv', dtype={
+    submission_df = pd.read_csv(f'{path}_submissions.csv', dtype={
         'author': 'string',
         'title': 'string',
-        'body': 'string',
+        'text': 'string',
         'id': 'string',
         'link_flair_text': 'string',
-    })
+        'distinguished': 'string',
+        'subreddit': 'string',
+        'link': 'string'
+    }).rename(columns={'text': 'body'}).drop(columns=['subreddit', 'link'])
     submission_df['created'] = pd.to_datetime(submission_df['created'], format='%Y-%m-%d %H:%M:%S')
 
-    comment_df = pd.read_csv(f'{path}_filtered_comments.csv', dtype={
+    comment_df = pd.read_csv(f'{path}_comments.csv', dtype={
         'author': 'string',
         'body': 'string',
-        'id': 'string',
+        'name': 'string',
         'parent_id': 'string',
-    })
+        'distinguished': 'string',
+        'subreddit': 'string',
+        'link': 'string'
+    }).rename(columns={'name': 'id'}).drop(columns=['subreddit', 'link'])
     comment_df['created'] = pd.to_datetime(comment_df['created'], format='%Y-%m-%d %H:%M:%S')
 
-    # Map each parent id to its index (will be efficient for parent lookup when getting depth level)
+    logger.info('Filtering submissions/comments')
+
+    # Filter submissions and comments (score >= min_score, not moderator, not removed/deleted, and not empty)
+    submission_df = submission_df[
+        (submission_df['score'] >= min_score) & 
+        (submission_df['distinguished'].ne('moderator').fillna(True)) &
+        (~(submission_df['body'].isin(['[removed]', '[deleted]']))) &
+        (submission_df['body'].notna())
+    ]
+    comment_df = comment_df[
+        (comment_df['score'] >= min_score) & 
+        (comment_df['distinguished'].ne('moderator').fillna(True)) &
+        (~(comment_df['body']).isin(['[removed]', '[deleted]'])) &
+        (comment_df['body'].notna())
+    ]
+
+    # Sort the comments by chronological order
+    # Usually the dataset is already sorted
+    comment_df = comment_df.sort_values(by='created', kind='stable')
+
+    # Reset index of dataframes after dropping rows
+    submission_df = submission_df.reset_index(drop=True)
+    comment_df = comment_df.reset_index(drop=True)
+
+    # Map each parent id to its index (will be efficient for parent lookup when pruning)
     id_to_idx = pd.Series(comment_df.index.values, index=comment_df['id'])
     comment_df['parent_idx'] = comment_df['parent_id'].map(id_to_idx).astype('Int64')
+
+    # Get all submission ids
+    submission_ids = set(submission_df['id'])
+
+    # Create label to drop detached comments
+    comment_df['drop'] = pd.NA
+    comment_df['drop'] = comment_df['drop'].astype('boolean')
+
+    # Iterate through each comment and drop all detached comments
+    # Since the comments in the dataset are usually in chronological order,
+    # this iteration implies that the parent comment of each comment is already processed up front
+    logger.info('Dropping detached comments')
+    for idx, row in comment_df.iterrows():
+        check_comment(idx)
+
+    # Drop all detached comments
+    comment_df = comment_df[comment_df['drop'] == False].drop(columns='drop')
+
+    logger.info('Filtered submission/comments')
+    logger.info(f'Submission count: {len(submission_df)}, Comment count: {len(comment_df)}')
     
     comment_df['depth'] = pd.NA
     comment_df['depth'] = comment_df['depth'].astype('Int64')
-
     # Iterate each comment and get its depth level
     for idx, row in comment_df.iterrows():
         check_depth(idx)
@@ -463,7 +587,9 @@ if __name__ == '__main__':
     # Only keep messages with a depth level of at most `max_depth + 1` to include leaf comments 
     # as replies to comments with depth level of `max_depth`
     comment_df = comment_df[comment_df['depth'] <= max_depth + 1]
+
     comment_df = comment_df.reset_index(drop=True)
+    comment_df = comment_df.drop(columns='parent_idx')
 
     # Get child ids of every submission/comment
     child_id_list = {}
@@ -481,6 +607,7 @@ if __name__ == '__main__':
         child_id_list[parent_id].append((idx, id))
         child_id_list[id] = []
 
+    logger.info('Building JSON discussion threads')
     pbar = tqdm(submission_df.iterrows(), total=len(submission_df), dynamic_ncols=100, desc='Processing')
     # Traverse the threads starting from each submission
     for idx, row in pbar:
@@ -498,4 +625,4 @@ if __name__ == '__main__':
 
     end_time = time.perf_counter()
     elapsed_time = end_time - start_time
-    print(f"Elapsed time: {elapsed_time:.6f} seconds")
+    logger.info(f"Elapsed time: {elapsed_time:.6f} seconds")
