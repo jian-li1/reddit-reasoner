@@ -476,22 +476,17 @@ def traverse_thread(idx: int, id: str, root: dict, thread: list) -> None:
 if __name__ == '__main__':
     # Get values of command line arguments
     args = get_args()
-    subreddit = args.subreddit
-    directory = args.directory
-    path = os.path.join(directory, subreddit)
+    path = os.path.join(args.directory, args.subreddit)
     min_score = args.min_score
     max_depth = args.max_depth
     max_children = args.max_replies
     ft_max_tok = args.ft_max_tok # Max token per thread to include in fine-tuning
     gen_max_tok = args.gen_max_tok # Max token per thread for synthetic data generation
     if ft_max_tok < 1000 or gen_max_tok < 1000:
-        raise ValueError(f'ft_max_tok and/or gen_max_tok must be at least 1000 tokens')
+        raise ValueError(f'--ft-max-tok and/or --gen-max-tok must be at least 1000 tokens')
 
-    gen_model_id = args.gen_model
-    gen_tokenizer = AutoTokenizer.from_pretrained(gen_model_id)
-
-    ft_model_id = args.ft_model
-    ft_tokenizer = AutoTokenizer.from_pretrained(ft_model_id)
+    gen_tokenizer = AutoTokenizer.from_pretrained(args.gen_model)
+    ft_tokenizer = AutoTokenizer.from_pretrained(args.ft_model)
 
     # Load NLTK libraries and punctuation model
     nltk.download('punkt_tab')
@@ -501,7 +496,7 @@ if __name__ == '__main__':
 
     start_time = time.perf_counter()
 
-    output_file = open(f'{path}_threads.csv', 'w', encoding='utf-8', newline="")
+    output_file = open(f'{path}_threads.csv', 'w', encoding='utf-8', newline='')
     csv_header = ['id', 'post_id', 'full_thread', 'subthread', 'subthread_context']
     writer = csv.DictWriter(output_file, fieldnames=csv_header)
     writer.writeheader()
