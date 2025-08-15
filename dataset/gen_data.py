@@ -49,7 +49,7 @@ class ExtendedClient(OpenAI):
         self.pattern = re.compile(
             r"(?s)<question>(?P<question>.*?)</question>\s*"
             r"<analysis>(?P<analysis>.*?)</analysis>\s*"
-            r"<answer>(?P<answer>.*?)</answer>"
+            r"<answer>(?P<answer>.*?)</answer>(?:</answer>|```|\Z)"
         )
 
         self.instruction_prompt = f"""Given an excerpt from a Reddit discussion, write a question that corresponds to the content of this discussion. Then answer the question, referencing ONLY the post and comments.
