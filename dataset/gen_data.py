@@ -49,7 +49,7 @@ class ExtendedClient(OpenAI):
         self.pattern = re.compile(
             r"(?s)<question>(?P<question>.*?)</question>\s*"
             r"<analysis>(?P<analysis>.*?)</analysis>\s*"
-            r"<answer>(?P<answer>.*?)</answer>(?:</answer>|```|\Z)"
+            r"(?:<answer>)?(?P<answer>.*?)(?:</answer>|```|\Z)"
         )
 
         self.instruction_prompt = f"""Given an excerpt from a Reddit discussion, write a question that corresponds to the content of this discussion. Then answer the question, referencing ONLY the post and comments.
@@ -125,7 +125,7 @@ Here is the Reddit comment:
 ```"""
         
         # Generate response and get content
-        response = client.chat.completions.create(
+        response = self.chat.completions.create(
             model=args.completion_model,
             messages=[
                 {'role': 'system', 'content': self.system_prompt},
@@ -154,7 +154,7 @@ def format_prompt(question: str, thread_list: list[str]) -> str:
     # Shuffle list
     random.shuffle(thread_list)
     for i, thread in enumerate(thread_list):
-        prompt += f'<document{i+1}>\n{thread}\n</document{i+1}>\n\n'
+        prompt += f'<thread{i+1}>\n{thread}\n</thread{i+1}>\n\n'
     
     prompt += f'Question: {question}'
     return prompt
@@ -249,9 +249,9 @@ if __name__ == '__main__':
             distractor_threads = [discussion_df.loc[i, 'full_thread'] for i in distractor_indices]
             oracle_thread = [full_thread] if include_oracle else []
 
-            # Format question and answer
+            # Format question
             formatted_question = format_prompt(question, distractor_threads + oracle_thread)
-            formatted_answer = format_answer(reasoning, answer)
+            # formatted_answer = format_answer(reasoning, answer)
 
             # Generate embeddings for the question
             try:
@@ -270,7 +270,7 @@ if __name__ == '__main__':
             }
             
             # Write question-answer pair and embeddings to files
-            dataset_file.write(json.dumps({'question': formatted_question, 'answer': formatted_answer}) + '\n')
+            dataset_file.write(json.dumps({'question': formatted_question, 'reasoning': reasoning, 'answer': answer}) + '\n')
             embedding_file.write(json.dumps(embedding_data) + '\n')
 
             pbar.set_postfix({'question': f'{j+1}/{args.num_questions}', 'skipped': num_skipped, 'failed': num_failed})

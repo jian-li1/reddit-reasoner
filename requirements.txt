@@ -2,3 +2,8 @@ zstandard
 pandas
 nltk
 deepmultilingualpunctuation
+openai
+jupyter
+unsloth
+vllm
+wandb
