@@ -5,19 +5,11 @@ from trl import SFTConfig, SFTTrainer
 from datasets import load_dataset
 from transformers import HfArgumentParser
 from dataclasses import dataclass, field
-from typing import Optional, Required
-import argparse
 import logging
 import os
 import traceback
 
-
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
-# logger = logging.getLogger()
-# logging.basicConfig(level=logging.INFO)
-# logger = logging.getLogger(__name__)
-# logger.setLevel(logging.INFO)
-
 
 os.environ['UNSLOTH_STABLE_DOWNLOADS'] = '1'
 os.environ['WANDB_PROJECT'] = os.environ.get('WANDB_PROJECT', 'reddit-reasoning')
@@ -111,6 +103,9 @@ if __name__ == '__main__':
     hf_parser = HfArgumentParser((Arguments, SFTConfig))
     args, sft_config = hf_parser.parse_args_into_dataclasses()
 
+    # references:
+    # https://colab.research.google.com/drive/1Ys44kVvmeZtnICzWz0xgpRnrIOjZAuxp?usp=sharing
+    
     # Load the model
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
@@ -192,8 +187,9 @@ if __name__ == '__main__':
         logging.info(f'Peak reserved memory for training = {used_memory_for_lora} GB.')
         logging.info(f'Peak reserved memory % of max memory = {used_percentage} %.')
         logging.info(f'Peak reserved memory for training % of max memory = {lora_percentage} %.')
-    except (KeyboardInterrupt, Exception):
-        logging.error(traceback.print_exc())
+    except (KeyboardInterrupt, Exception) as e:
+        traceback.print_exc()
+        logging.error(e)
     finally:
         # Save adapter
         trainer.save_model(args.save_dir)
