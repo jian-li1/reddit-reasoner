@@ -8,47 +8,13 @@ from dataclasses import dataclass, field
 import logging
 import os
 import traceback
+from chat_template import *
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
 os.environ['UNSLOTH_STABLE_DOWNLOADS'] = '1'
 os.environ['WANDB_PROJECT'] = os.environ.get('WANDB_PROJECT', 'reddit-reasoning')
 os.environ['WANDB_LOG_MODEL'] = os.environ.get('WANDB_LOG_MODEL', 'checkpoint')
-
-reasoning_start = '<think>'
-reasoning_end   = '</think>'
-solution_start  = '<answer>'
-solution_end    = '</answer>'
-
-system_prompt = f"""You are given a set of Reddit discussion threads. 
-Identify the thread that is most relevant to the given question.
-Think about the question and provide your working out.
-Place it between {reasoning_start} and {reasoning_end}.
-Then, answer the question using only information from that selected thread.
-Provide your answer between {solution_start}{solution_end}.
-"""
-
-chat_template = \
-    "{% if messages[0]['role'] == 'system' %}"\
-        "{{ messages[0]['content'] + eos_token }}"\
-        "{% set loop_messages = messages[1:] %}"\
-    "{% else %}"\
-        "{{ '{system_prompt}' + eos_token }}"\
-        "{% set loop_messages = messages %}"\
-    "{% endif %}"\
-    "{% for message in loop_messages %}"\
-        "{% if message['role'] == 'user' %}"\
-            "{{ message['content'] }}"\
-        "{% elif message['role'] == 'assistant' %}"\
-            "{{ message['content'] + eos_token }}"\
-        "{% endif %}"\
-    "{% endfor %}"\
-    "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
-    "{% endif %}"
-
-chat_template = chat_template\
-    .replace("'{system_prompt}'",   f"'{system_prompt}'")\
-    .replace("'{reasoning_start}'", f"'{reasoning_start}'")
 
 @dataclass
 class Arguments:
@@ -70,9 +36,9 @@ class Arguments:
     lora_alpha: int | None = field(default=None, metadata={'help': 'LoRA alpha. If not specified, defaults to LoRA rank.'})
     lora_dropout: float = field(default=0, metadata={'help': 'LoRA dropout'})
     bias: str = field(default='none', metadata={'help': 'Model bias'})
-    model_seed: int = field(default=3407, metadata={'help': 'Seed used to load the LoRA adapter.'})
+    model_seed: int = field(default=3407, metadata={'help': 'Seed to load the LoRA adapter.'})
     use_rslora: bool = field(default=False, metadata={'help': 'Uses rank stabilized LoRA.'})
-    shuffle_seed: int = field(default=42, metadata={'help': 'Seed used to shuffle dataset.'})
+    shuffle_seed: int = field(default=42, metadata={'help': 'Seed to shuffle dataset.'})
     split: float = field(default=0.1, metadata={'help': 'Proportion to split train/test data.'})
 
     def __post_init__(self):
@@ -90,9 +56,9 @@ def format_prompts(examples):
     texts = []
     for question, reasoning, answer in zip(questions, reasonings, answers):
         text = [
-            {'role': 'system', 'content': system_prompt},
+            {'role': 'system', 'content': SYSTEM_PROMPT},
             {'role': 'user', 'content': question},
-            {'role': 'assistant', 'content': reasoning_start + reasoning + reasoning_end + solution_start + answer + solution_end}
+            {'role': 'assistant', 'content': REASONING_START + reasoning + REASONING_END + SOLUTION_START + answer + SOLUTION_END}
         ]
         texts.append(tokenizer.apply_chat_template(text, tokenize=False, add_generation_prompt=False))
     
