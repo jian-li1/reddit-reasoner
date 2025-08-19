@@ -26,10 +26,10 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--embedding-model', type=str, required=True, help='Embedding model to encode queries')
     parser.add_argument('--sys', type=str, default='You are a helpful assistant.', help='System prompt')
     parser.add_argument('--custom-instructions', type=str, nargs='*', default=[], help='Additional instructions passed into the completion model')
-    parser.add_argument('-p', '--p', type=float, default=1.0, help='Percentage of the dataset that includes the oracle discussion thread')
-    parser.add_argument('--num-distractors', type=int, default=2, help='Number of distractor discussion thread to include for each data point')
-    parser.add_argument('--num-questions', type=int, default=1, help='Number of question-answer pairs to generate for each discussion thread')
-    parser.add_argument('--num-discussions', type=int, default=None, help='Number of discussion threads to generate question-answer pairs')
+    parser.add_argument('-p', '--p', type=float, default=1.0, help='Percentage of the dataset that includes the oracle discussion thread (default: 1.0)')
+    parser.add_argument('--num-distractors', type=int, default=2, help='Number of distractor discussion thread to include for each data point (default: 2)')
+    parser.add_argument('--num-questions', type=int, default=1, help='Number of question-answer pairs to generate for each discussion thread (default: 1)')
+    parser.add_argument('--num-discussions', type=int, default=None, help='Number of discussion threads to generate question-answer pairs (default: None)')
 
     args = parser.parse_args()
     return args
@@ -101,7 +101,10 @@ If there is insufficient information in this discussion to form a question and a
 ```"""
 
     def generate_embeddings(self, text: str) -> list[float]:
-        response = self.embeddings.create(model=args.embedding_model, input=text)
+        """
+        Generates embeddings for a text.
+        """
+        response = self.embeddings.create(model=self.embedding_model, input=text)
         return response.data[0].embedding
 
     def generate_qa_pair(self, thread: str, thread_context: str | None = None) -> dict['question': str, 'reasoning': str, 'answer': str]:
