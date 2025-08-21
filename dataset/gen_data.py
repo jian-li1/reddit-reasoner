@@ -8,6 +8,7 @@ import time
 import argparse
 from tqdm import tqdm
 import logging
+import traceback
 
 logging.basicConfig(format='[%(levelname)s] %(message)s')
 logger = logging.getLogger()
@@ -25,7 +26,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--completion-model', type=str, required=True, help='Completion model for generating question-answer pairs')
     parser.add_argument('--embedding-model', type=str, required=True, help='Embedding model to encode queries')
     parser.add_argument('--sys', type=str, default='You are a helpful assistant.', help='System prompt')
-    parser.add_argument('--custom-instructions', type=str, nargs='*', default=[], help='Additional instructions passed into the completion model')
+    parser.add_argument('--question-instructions', type=str, nargs='*', default=[], help='Additional instructions for generating the question')
+    parser.add_argument('--answer-instructions', type=str, nargs='*', default=[], help='Additional instructions for generating the reasoning and answer')
     parser.add_argument('-p', '--p', type=float, default=1.0, help='Percentage of the dataset that includes the oracle discussion thread (default: 1.0)')
     parser.add_argument('--num-distractors', type=int, default=2, help='Number of distractor discussion thread to include for each data point (default: 2)')
     parser.add_argument('--num-questions', type=int, default=1, help='Number of question-answer pairs to generate for each discussion thread (default: 1)')
@@ -38,67 +40,70 @@ class ExtendedClient(OpenAI):
     """
     Extended OpenAI class for embedding queries and generating question-answer pairs.
     """
-    def __init__(self, completion_model: str, embedding_model: str, system_prompt: str, custom_instructions: list[str], *args, **kwargs) -> None:
+    def __init__(self, completion_model: str, embedding_model: str, system_prompt: str, question_instructions: list[str], answer_instructions: list[str], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.completion_model = completion_model
         self.embedding_model = embedding_model
         self.system_prompt = system_prompt
-        self.custom_instructions = custom_instructions
+        self.question_instructions = question_instructions
+        self.answer_instructions = answer_instructions
 
         # Regex pattern for parsing response
-        self.pattern = re.compile(
-            r"(?s)<question>(?P<question>.*?)</question>\s*"
-            r"<analysis>(?P<analysis>.*?)</analysis>\s*"
-            r"(?:<answer>)?(?P<answer>.*?)(?:</answer>|```|\Z)"
+        self.question_pattern = re.compile(
+            r"(?s)<question>(?P<question>.*?)(?:</question>|```|\Z)"
         )
+        self.answer_pattern = re.compile(
+            r"(?s)<reasoning>(?P<reasoning>.*?)</reasoning>\s*"
+            r"(?P<answer>.*?)(?:```|\Z)"
+        )
+        
+        self.question_prompt = f"""Given an excerpt from a Reddit discussion, write a question that corresponds to the content of this discussion.
 
-        self.instruction_prompt = f"""Given an excerpt from a Reddit discussion, write a question that corresponds to the content of this discussion. Then answer the question, referencing ONLY the post and comments.
-
-In your reasoning, carefully review the post and every comment and walk through your thought process before answering (what parts of the discussion are meaningful and why). Disregard any comments that are irrelevant to the post.
-
-Try to answer in the same exact wording as in the posts and comments.
-
-Answer in this template, including the xml block:
+Answer in this template/outline:
 ```xml
 <question>
 your question
 </question>
-<analysis>
-Let's break this down. We need to answer the question based on the posts given. 
+```
+If there is insufficient information in this discussion to form a question, respond with empty blocks in this template:
+```xml
+<question>
+</question>
+```
+Additional notes:
+- Question should NOT mention the discussion or explicitly include Reddit terms such as "comment", "post", "thread", "author", or "OP".\
+{'\n' + '\n'.join(f'- {instruction}' for instruction in self.question_instructions) if self.question_instructions else ''}"""
 
-The user is asking...
+        self.answer_prompt = f"""Given an excerpt from a Reddit discussion and a question, write an answer that corresponds to the content of this discussion, referencing only the post and comments.
+
+In your reasoning, carefully review the post and every comment and walk through your thought process before answering (what parts of the discussion are meaningful and why).
+
+Answer in this template:
+```
+<reasoning>
+Let's break this down.
+
+The question is asking...
 
 The post discusses... It mentions...
 
 (For each comment)
-Comment <comment id> mentions...
+Comment 1 mentions...
 
-Comment <comment id> mentions...
+Comment 2 mentions...
 
 ...
 
 The key ideas presented in this discussion include...
 
 Therefore, the answer should be about...
-</analysis>
-<answer>
+</reasoning>
 your answer
-</answer>
-```
-
-If there is insufficient information in this discussion to form a question and answer, respond with empty blocks in this template:
-```xml
-<question>
-</question>
-<analysis>
-</analysis>
-<answer>
-</answer>
 ```
 
 Additional notes:
-- Question and answer should refer to the Reddit thread but should NOT explicitly include Reddit terms such as "comment", "post", "thread", "author", or "OP".\
-{'\n' + '\n'.join(f'- {instruction}' for instruction in self.custom_instructions) if self.custom_instructions else ''}"""
+- Answer should NOT mention the discussion or explicitly include Reddit terms such as "comment", "post", "thread", "author", or "OP".\
+{'\n' + '\n'.join(f'- {instruction}' for instruction in self.answer_instructions) if self.answer_instructions else ''}"""
 
     def generate_embeddings(self, text: str) -> list[float]:
         """
@@ -107,13 +112,13 @@ Additional notes:
         response = self.embeddings.create(model=self.embedding_model, input=text)
         return response.data[0].embedding
 
-    def generate_qa_pair(self, thread: str, thread_context: str | None = None) -> dict['question': str, 'reasoning': str, 'answer': str]:
+    def generate_qa_pair(self, thread: str, thread_context: str | None = None) -> dict:
         """
         Takes in a JSON text of the discussion thread and, optionally, a JSON text of the discussion thread context
         and generates a question-answer pair based on the discussion thread.
         """
         if thread_context:
-            user_prompt = f"""Here is the context containing the original post and any previous comments before the Reddit comment. This information should ONLY be used for understanding the context of the comment and NOT for creating the question.
+            user_prompt = f"""Here is the context containing the original post and any previous comments before the given Reddit comment. This information should only be used for understanding the context of the comment.
 ```xml
 {thread_context}
 ```
@@ -126,7 +131,7 @@ Here is the Reddit comment:
 ```xml
 {thread}
 ```"""
-        
+        # Generate the question
         match = None
         attempt = 0
         # Attempt three times before throwing an error
@@ -136,23 +141,62 @@ Here is the Reddit comment:
                 model=args.completion_model,
                 messages=[
                     {'role': 'system', 'content': self.system_prompt},
-                    {'role': 'user', 'content': self.instruction_prompt + '\n\n' + user_prompt}
+                    {'role': 'user', 'content': self.question_prompt + '\n\n' + user_prompt}
                 ]
             )
             content = response.choices[0].message.content
 
-            # Parse question, reasoning, and answer
-            match = self.pattern.search(content)
+            # Parse question
+            match = self.question_pattern.search(content)
+
+            attempt += 1
 
         if not match:
-            raise ValueError(f'expect <question>, <analysis>, and <answer> blocks in order:\n"{content}"')
+            raise ValueError(f'expect <question> block in order:\n"{content}"')
         
         content_dict = {key: value.strip() for key, value in match.groupdict().items()}
-        return {
-            'question': content_dict['question'],
-            'reasoning': content_dict['analysis'],
-            'answer': content_dict['answer']
-        }
+
+        # Return blank if question is blank
+        if content_dict['question'] == '':
+            return content_dict | {'reasoning': '', 'answer': ''}
+
+        # Now, generate the reasoning and answer
+        match = None
+        attempt = 0
+        # Attempt three times before throwing an error
+        while not match and attempt < 3:
+            # Generate response and get content
+            response = self.chat.completions.create(
+                model=args.completion_model,
+                messages=[
+                    {'role': 'system', 'content': self.system_prompt},
+                    {
+                        'role': 'user', 
+                        'content': f"""{self.answer_prompt}
+
+{user_prompt}
+
+Here is the question:
+```xml
+<question>
+{content_dict['question']}
+</question>
+```"""
+                    }
+                ]
+            )
+            content = response.choices[0].message.content
+
+            # Parse reasoning and answer
+            match = self.answer_pattern.search(content)
+
+            attempt += 1
+
+        if not match:
+            raise ValueError(f'expect <reasoning> and <answer> block in order:\n"{content}"')
+        
+        content_dict = content_dict | {key: value.strip() for key, value in match.groupdict().items()}
+        return content_dict
 
 def format_prompt(question: str, thread_list: list[str]) -> str:
     """
@@ -192,7 +236,8 @@ if __name__ == '__main__':
         completion_model=args.completion_model,
         embedding_model=args.embedding_model,
         system_prompt=args.sys,
-        custom_instructions=args.custom_instructions,
+        question_instructions=args.question_instructions,
+        answer_instructions=args.answer_instructions,
         base_url=args.base_url, 
         api_key=args.api_key
     )
@@ -242,17 +287,18 @@ if __name__ == '__main__':
                 data = client.generate_qa_pair(subthread, subthread_context)
             except Exception as e:
                 num_failed += 1
+                traceback.print_exc()
                 logger.error(e)
                 pbar.set_postfix({'question': f'{j+1}/{args.num_questions}', 'skipped': num_skipped, 'failed': num_failed})
                 continue
             
+
+            question, reasoning, answer = data['question'], data['reasoning'], data['answer']
             # Skip discussion if any fields are empty
-            if not (data['question'] and data['reasoning'] and data['answer']):
+            if not (question and reasoning and answer):
                 num_skipped += 1
                 pbar.set_postfix({'question': f'{j+1}/{args.num_questions}', 'skipped': num_skipped, 'failed': num_failed})
                 break
-            
-            question, reasoning, answer = data['question'], data['reasoning'], data['answer']
 
             # Randomly sample `num_distractor` indices for selecting distractor discussion threads
             distractor_indices = random.sample(list(set(range(df_len)) - {idx}), args.num_distractors)
@@ -270,6 +316,7 @@ if __name__ == '__main__':
                 embeddings = client.generate_embeddings(question)
             except Exception as e:
                 num_failed += 1
+                traceback.print_exc()
                 logger.error(e)
                 pbar.set_postfix({'question': f'{j+1}/{args.num_questions}', 'skipped': num_skipped, 'failed': num_failed})
                 continue
