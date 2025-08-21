@@ -58,32 +58,24 @@ In your reasoning, carefully review the post and every comment and walk through 
 
 Try to answer in the same exact wording as in the posts and comments.
 
-Additional notes:\
-{'\n' + '\n'.join(f'- {instruction}' for instruction in self.custom_instructions) if self.custom_instructions else ''}
-- Question and answer should refer to the Reddit thread but should NOT explicitly include Reddit terms such as "comment", "post", "thread", "author", or "OP".
-
-Answer in this template:
+Answer in this template, including the xml block:
 ```xml
 <question>
 your question
 </question>
 <analysis>
-Let's break this down.
+Let's break this down. We need to answer the question based on the posts given. 
 
-The question asks...
+The user is asking...
 
-The post discusses... It mentions...
+In post `post id`, the author discusses...
 
 (For each comment)
-Comment <comment id> mentions...
-
-Comment <comment id> mentions...
-
-...
+Comment `comment id` mentions...
 
 The key ideas presented in this discussion include...
 
-Therefore, the answer should be about...
+Therefore, the answer should focus on...
 </analysis>
 <answer>
 your answer
@@ -98,7 +90,11 @@ If there is insufficient information in this discussion to form a question and a
 </analysis>
 <answer>
 </answer>
-```"""
+```
+
+Additional notes:
+- Question and answer should refer to the Reddit thread but should NOT explicitly include Reddit terms such as "comment", "post", "thread", "author", or "OP".\
+{'\n' + '\n'.join(f'- {instruction}' for instruction in self.custom_instructions) if self.custom_instructions else ''}"""
 
     def generate_embeddings(self, text: str) -> list[float]:
         """
@@ -127,20 +123,25 @@ Here is the Reddit comment:
 {thread}
 ```"""
         
-        # Generate response and get content
-        response = self.chat.completions.create(
-            model=args.completion_model,
-            messages=[
-                {'role': 'system', 'content': self.system_prompt},
-                {'role': 'user', 'content': self.instruction_prompt + '\n\n' + user_prompt}
-            ]
-        )
-        content = response.choices[0].message.content
+        match = None
+        attempt = 0
+        # Attempt three times before throwing an error
+        while not match and attempt < 3:
+            # Generate response and get content
+            response = self.chat.completions.create(
+                model=args.completion_model,
+                messages=[
+                    {'role': 'system', 'content': self.system_prompt},
+                    {'role': 'user', 'content': self.instruction_prompt + '\n\n' + user_prompt}
+                ]
+            )
+            content = response.choices[0].message.content
 
-        # Parse question, reasoning, and answer
-        match = self.pattern.search(content)
+            # Parse question, reasoning, and answer
+            match = self.pattern.search(content)
+
         if not match:
-            raise ValueError("expect <question>, <analysis>, and <answer> blocks in order.")
+            raise ValueError(f'expect <question>, <analysis>, and <answer> blocks in order:\n"{content}"')
         
         content_dict = {key: value.strip() for key, value in match.groupdict().items()}
         return {
@@ -214,6 +215,10 @@ if __name__ == '__main__':
     # Mark p% of the data to include oracle discussion thread and (1-p)% of the data to exclude oracle discussion thread
     midpoint = int(len(discussion_df) * args.p)
     discussion_df['include_oracle'] = [True] * midpoint + [False] * (df_len - midpoint)
+
+    # Shuffle the dataframe again if p is less than 1
+    if args.p < 1:
+        discussion_df = discussion_df.sample(frac=1, random_state=42).reset_index(drop=True)
 
     num_failed = 0
     num_skipped = 0
