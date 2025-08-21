@@ -39,7 +39,7 @@ class Arguments:
     model_seed: int = field(default=3407, metadata={'help': 'Seed to load the LoRA adapter.'})
     use_rslora: bool = field(default=False, metadata={'help': 'Uses rank stabilized LoRA.'})
     shuffle_seed: int = field(default=42, metadata={'help': 'Seed to shuffle dataset.'})
-    split: float = field(default=0.1, metadata={'help': 'Proportion to split train/test data.'})
+    split: float = field(default=0, metadata={'help': 'Proportion to split train/test data.'})
 
     def __post_init__(self):
         if not self.lora_alpha:
@@ -58,7 +58,7 @@ def format_prompts(examples):
         text = [
             {'role': 'system', 'content': SYSTEM_PROMPT},
             {'role': 'user', 'content': question},
-            {'role': 'assistant', 'content': REASONING_START + reasoning + REASONING_END + SOLUTION_START + answer + SOLUTION_END}
+            {'role': 'assistant', 'content': REASONING_START + reasoning + REASONING_END + '\n' + SOLUTION_START + answer + SOLUTION_END}
         ]
         texts.append(tokenizer.apply_chat_template(text, tokenize=False, add_generation_prompt=False))
     
@@ -111,12 +111,16 @@ if __name__ == '__main__':
     dataset = dataset.map(format_prompts, batched=True)
 
     # Split the dataset into train/test data
-    splits = dataset.train_test_split(test_size=0.1)
-    train_ds = splits['train']
-    eval_ds = splits['test']
+    if args.split > 0:
+        splits = dataset.train_test_split(test_size=args.split)
+        train_ds = splits['train']
+        eval_ds = splits['test']
+    else:
+        train_ds = dataset
 
     logging.info(f'Train dataset size: {len(train_ds)}')
-    logging.info(f'Eval dataset size: {len(eval_ds)}')
+    if args.split > 0:
+        logging.info(f'Eval dataset size: {len(eval_ds)}')
 
     # Initialize SFT trainer
     # sft_config.seed = args.seed
@@ -124,7 +128,7 @@ if __name__ == '__main__':
         model = model,
         tokenizer = tokenizer,
         train_dataset=train_ds,
-        eval_dataset=(eval_ds if len(eval_ds) > 0 else None),
+        eval_dataset=(eval_ds if args.split > 0 else None),
         max_seq_length=args.max_seq_len,
         args=sft_config
     )
