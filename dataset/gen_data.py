@@ -53,7 +53,7 @@ class ExtendedClient(OpenAI):
             r"(?s)<question>(?P<question>.*?)(?:</question>|```|\Z)"
         )
         self.answer_pattern = re.compile(
-            r"(?s)<reasoning>(?P<reasoning>.*?)</reasoning>\s*"
+            r"(?s)<analysis>(?P<reasoning>.*?)</analysis>\s*"
             r"(?:<answer>)?(?P<answer>.*?)(?:</answer>|```|\Z)"
         )
         
@@ -80,7 +80,7 @@ In your reasoning, carefully review the post and every comment and walk through 
 
 Answer in this template:
 ```
-<think>
+<analysis>
 Let's break this down.
 
 The question is asking...
@@ -97,7 +97,7 @@ Comment 2 mentions...
 The key ideas presented in this discussion include...
 
 Therefore, the answer should be about...
-</think>
+</analysis>
 <answer>
 your answer
 </answer>
