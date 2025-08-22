@@ -151,6 +151,10 @@ if __name__ == '__main__':
         repetition_penalty=args.repeat_penalty
     )
 
+    # Use custom chat template for base models
+    if not tokenizer.chat_template:
+        tokenizer.chat_template = chat_template
+
     # Generate specified prompt and exit
     if args.prompt:
         # Get top k most relevant discussion threads

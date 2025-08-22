@@ -54,7 +54,7 @@ class ExtendedClient(OpenAI):
         )
         self.answer_pattern = re.compile(
             r"(?s)<reasoning>(?P<reasoning>.*?)</reasoning>\s*"
-            r"(?P<answer>.*?)(?:```|\Z)"
+            r"(?:<answer>)?(?P<answer>.*?)(?:</answer>|```|\Z)"
         )
         
         self.question_prompt = f"""Given an excerpt from a Reddit discussion, write a question that corresponds to the content of this discussion.
@@ -80,7 +80,7 @@ In your reasoning, carefully review the post and every comment and walk through 
 
 Answer in this template:
 ```
-<reasoning>
+<think>
 Let's break this down.
 
 The question is asking...
@@ -97,8 +97,10 @@ Comment 2 mentions...
 The key ideas presented in this discussion include...
 
 Therefore, the answer should be about...
-</reasoning>
+</think>
+<answer>
 your answer
+</answer>
 ```
 
 Additional notes:
@@ -131,11 +133,12 @@ Here is the Reddit comment:
 ```xml
 {thread}
 ```"""
+        max_attempts = 5
         # Generate the question
         match = None
         attempt = 0
         # Attempt three times before throwing an error
-        while not match and attempt < 3:
+        while not match and attempt < max_attempts:
             # Generate response and get content
             response = self.chat.completions.create(
                 model=args.completion_model,
@@ -164,7 +167,7 @@ Here is the Reddit comment:
         match = None
         attempt = 0
         # Attempt three times before throwing an error
-        while not match and attempt < 3:
+        while not match and attempt < max_attempts:
             # Generate response and get content
             response = self.chat.completions.create(
                 model=args.completion_model,
